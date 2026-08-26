@@ -109,11 +109,37 @@
 5분마다 자동 실행되어 Discord DM/Gemini/Notion 호출이 진짜로 발생한다(테스트 중 PM에게
 반복 DM 갈 수 있음). merge 전에 `workflow_dispatch`로 먼저 1회 수동 테스트할 것.
 
-## Phase 09. Definition of Done 최종 점검
+## Phase 09. deadline-remind (신규, 대화 중 추가된 기능)
+
+> 기존 00~08 파이프라인(회의/채팅 → 문서화)과는 별개의 새 기능. 마감일이 임박한 작업의
+> 담당자에게 PM 말투로 진행 확인 DM을 보내고, 답장을 받아 완수 가능성을 판단해
+> 응원/독촉 메시지를 이어서 보낸다. `implementation_plan.md`에는 없던 것을 대화 중 설계해
+> 추가했다 (자세한 배경은 `phases/09-deadline-remind/README.md` 참고).
+
+- [x] `shared/schemas.py`에 `DeadlineRemindInput`/`DeadlineRemindOutput` 추가
+- [x] `.env.example`에 `DISCORD_ASSIGNEE_USER_ID` 추가
+- [x] `phases/09-deadline-remind/fixtures/sample_task.json` 작성
+- [x] `phases/09-deadline-remind/run.py` 구현
+  - [x] D-3(기본값) 이내 작업만 진행, 아니면 `skipped: true`로 조용히 종료 (`--force`로 무시 가능)
+  - [x] Gemini로 체크인 메시지 생성(인사+작업+D-day+진행 상황 질문 형식) → DM 발송
+  - [x] 담당자 답장을 최대 5분 대기, 타임아웃 시 `assessment: "no_reply"`
+  - [x] 답장 오면 Gemini로 완수 가능성 판단(`on_track`/`at_risk`) + 마무리 메시지 생성
+    (질문으로 끝나지 않도록 명시 — PM 질문→담당자 답장→Notion 반영→PM 마무리로 정확히 끝남)
+  - [x] 답장 받으면 Notion DB에 `progress_check` 페이지로 반영 (`06-notion-sync`의
+    `build_payload()` 재사용) — 마무리 메시지 발송 전에 실행
+  - [x] 마무리 메시지 발송 전 30~90초 랜덤 딜레이("입력 중..." 표시) — 즉답하면 봇 티가 나서 추가
+- [x] `phases/09-deadline-remind/README.md` 작성 (MVP 단순화 범위, 대화 흐름 명시)
+- [x] 검증: 실제 Discord DM으로 체크인→답장→Notion 반영→마무리 메시지까지 왕복 확인,
+  답장 내용에 따라 `assessment`/메시지가 실제로 달라지는 것 확인, 무응답 타임아웃도 확인
+- [ ] **MVP 범위 밖(향후 과제)**: 담당자 여러 명(Notion에서 이름↔Discord ID 조회), 기존 task
+  페이지 업데이트(지금은 로그성 새 페이지만 생성), 매일 도는 GitHub Actions 워크플로 연결
+
+## Phase 10. Definition of Done 최종 점검
 
 - [ ] `phases/00~06` 각 디렉토리 fixtures만으로 단독 실행 시 전부 통과
 - [ ] `07-cycle-integration/run_all_local.sh` 로컬 완주
 - [ ] `chat-poll.yml` 5분 간격 최소 2회 정상 실행 + 의미 없는 결과일 때 04 이후 스킵 확인
 - [ ] `process-meeting.yml` 수동 실행 → 전사~승인 대기까지 정상 진행 확인
-- [ ] `pm-approval` environment에서 실제 Approve 후에만 Notion 반영되는 것 확인
+- [ ] PM이 Discord DM의 버튼(수락/거절/보류)을 눌러야 `decision`이 확정되고, `approved`일 때만
+  Notion 반영이 실행되는 것 확인 (GitHub Environment 아님, [[05-pm-approval]] 참고)
 - [ ] 전체 과정 유료 API 호출 0건 확인 (Gemini/Actions 무료 티어 내)

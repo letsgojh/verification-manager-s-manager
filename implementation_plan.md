@@ -158,12 +158,39 @@ repo/
 DISCORD_BOT_TOKEN=
 DISCORD_CHANNEL_ID=
 DISCORD_PM_USER_ID=
+DISCORD_ASSIGNEE_USER_ID=
 GEMINI_API_KEY=
 NOTION_API_KEY=
 NOTION_DATABASE_ID=
 ```
 
-## 6. Definition of Done
+## 6. (추가) phases/09-deadline-remind
+
+원안(0~6장)에는 없던, 대화 중 추가된 별도 기능. 회의/채팅 → 문서화 파이프라인과는 독립적으로,
+마감일이 임박한 작업의 담당자에게 진행 상황을 확인하고 완수 가능성에 따라 응원/독촉하는
+DM 루프.
+
+- 목적: 마감(D-3 이내)이 임박한 작업의 담당자에게 PM 말투로 진행 확인 DM을 보내고, 답장을
+  받으면 완수 가능성을 판단해 응원(`on_track`) 또는 독촉(`at_risk`) 메시지를 이어서 보낸다.
+- **대화 흐름**: PM 질문(체크인) → 담당자 답장 → Notion 반영 → PM 마무리 메시지, 정확히
+  이 순서로 3턴에서 끝난다. 마무리 메시지는 절대 질문으로 끝내지 않도록 프롬프트에 명시
+  (질문으로 끝나면 담당자가 또 답장해야 해서 대화가 안 끝남).
+- **MVP 단순화**: 담당자를 Notion에서 여러 명 조회하지 않고 `DISCORD_ASSIGNEE_USER_ID` 한
+  명에게만 보낸다. Notion 반영은 기존 task 페이지를 업데이트하는 게 아니라
+  `06-notion-sync`의 `build_payload()`를 재사용해 `Type: progress_check`인 새 로그성
+  페이지를 만드는 방식(단순화). PM 말투는 실제 샘플이 없어 프롬프트 톤 가이드로
+  대체(추후 few-shot으로 교체 가능).
+- 입력 스키마: `{"task": str, "assignee": str, "due_date": "YYYY-MM-DD", "type": str}`
+- 출력 스키마: `{"skipped": bool, "days_left": int|null, "check_in_message": str|null, "assignee_reply": str|null, "assessment": "on_track"|"at_risk"|"no_reply"|null, "notion_synced": bool, "closing_message": str|null}`
+- 독립 실행: `python phases/09-deadline-remind/run.py --input fixtures/sample_task.json`
+- 트리거(향후): 매일 1회 cron으로 Notion DB를 훑어 D-3 이내 작업을 찾아 이 스크립트를
+  돌리는 워크플로를 상정하고 있으나, 아직 GitHub Actions 연결은 안 되어 있음(후속 작업).
+- 통과 기준: D-3 초과 작업은 `skipped: true`로 조용히 종료, D-3 이내 작업은 실제 DM
+  왕복(체크인→답장→Notion 반영→마무리)이 되고 답장 내용에 따라 `assessment`/메시지가
+  달라지며 마무리 메시지가 질문으로 끝나지 않음, 무응답 타임아웃도 에러 없이 처리됨(이
+  경우 Notion 반영 없이 종료) — 전부 실제 Discord DM/Notion으로 확인 완료.
+
+## 7. Definition of Done
 
 - [ ] `phases/00~06` 각 디렉토리를 fixtures만으로 단독 실행했을 때 전부 통과 기준을 만족한다.
 - [ ] `07-cycle-integration/run_all_local.sh`가 로컬에서 끝까지 에러 없이 완주한다.

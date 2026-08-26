@@ -8,6 +8,7 @@
 DISCORD_BOT_TOKEN=
 DISCORD_CHANNEL_ID=
 DISCORD_PM_USER_ID=
+DISCORD_ASSIGNEE_USER_ID=
 GEMINI_API_KEY=
 NOTION_API_KEY=
 NOTION_DATABASE_ID=
@@ -36,13 +37,16 @@ NOTION_DATABASE_ID=
 5. 이미 권한 없이 초대해버렸다면: 서버 설정 → **Roles** → 봇 이름의 역할 → `View Channel`,
    `Read Message History` 켜기 (또는 OAuth2 URL로 재초대해서 권한 갱신)
 
-## 2. Discord 채널/유저 ID 얻기 (`DISCORD_CHANNEL_ID`, `DISCORD_PM_USER_ID`)
+## 2. Discord 채널/유저 ID 얻기 (`DISCORD_CHANNEL_ID`, `DISCORD_PM_USER_ID`, `DISCORD_ASSIGNEE_USER_ID`)
 
 1. Discord 앱 → 좌측 하단 톱니바퀴(사용자 설정) → **고급(Advanced)** → **개발자 모드** 토글 ON
 2. **채널 ID**: 봇이 메시지를 읽을 텍스트 채널(음성 채널 아님) 우클릭 → **채널 ID 복사** →
    `.env`의 `DISCORD_CHANNEL_ID=`
 3. **PM 유저 ID**: 승인 DM을 받을 사람 우클릭 → **사용자 ID 복사** → `.env`의 `DISCORD_PM_USER_ID=`
-   - 이 사람이 봇과 같은 서버에 있어야 봇이 DM을 보낼 수 있다 (1-2에서 초대한 서버에 있으면 됨)
+4. **담당자(assignee) 유저 ID**: `phases/09-deadline-remind`가 진행 확인 DM을 보낼 사람 →
+   같은 방법으로 → `.env`의 `DISCORD_ASSIGNEE_USER_ID=` (MVP 단계라 지금은 한 명만)
+   - 3, 4의 사람이 봇과 같은 서버에 있어야 봇이 DM을 보낼 수 있다 (1-2에서 초대한 서버에
+     있으면 됨). 테스트 중엔 PM과 담당자를 같은 사람(본인)으로 둬도 무방하다.
 
 ## 3. Gemini API 키 (`GEMINI_API_KEY`)
 

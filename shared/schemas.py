@@ -75,3 +75,22 @@ class PmApprovalOutput(BaseModel):
 class NotionSyncInput(BaseModel):
     structured: StructuredChange
     doc_text: str
+
+
+# ---- phase 09: deadline-remind ----
+
+class DeadlineRemindInput(BaseModel):
+    task: str
+    assignee: str
+    due_date: str  # YYYY-MM-DD
+    type: str
+
+
+class DeadlineRemindOutput(BaseModel):
+    skipped: bool = False
+    days_left: Optional[int] = None
+    check_in_message: Optional[str] = None
+    assignee_reply: Optional[str] = None
+    assessment: Optional[Literal["on_track", "at_risk", "no_reply"]] = None
+    notion_synced: bool = False
+    closing_message: Optional[str] = None
