@@ -60,7 +60,8 @@ repo/
     │   ├── README.md
     │   └── fixtures/sample_judged_change.json
     ├── 05-pm-approval/
-    │   ├── README.md               # 코드 아님, GitHub Environment 설정 가이드
+    │   ├── run.py                  # Discord DM + 수락/거절/보류 버튼으로 PM 승인 요청
+    │   ├── README.md
     │   └── fixtures/sample_draft.json
     ├── 06-notion-sync/
     │   ├── run.py
@@ -110,12 +111,19 @@ repo/
 - 통과 기준: `structured` 필드가 비어있지 않고, `doc_text`가 사람이 읽었을 때 자연스러운 한국어 문장인지 육안 확인.
 
 ### phases/05-pm-approval
-- 목적: 사람이 승인해야 다음 단계(Notion 반영)로 넘어가는 게이트를 GitHub 기능으로 구현.
-- 코드 없음. 대신 README.md에 아래 설정 절차를 그대로 따라한다:
-  1. 레포 Settings → Environments → New environment (`pm-approval`) 생성
-  2. Required reviewers에 본인(팀원) 지정
-  3. `process-meeting.yml`, `chat-poll.yml`의 Notion 반영 job에 `environment: pm-approval` 추가
-- 통과 기준: 워크플로 실행 시 Notion 반영 job이 자동 실행되지 않고 "Review pending" 상태로 멈춘 뒤, Actions 화면에서 Approve를 눌러야 다음 job이 실행되는 것을 직접 확인.
+- 목적: 사람(PM)이 승인해야 다음 단계(Notion 반영)로 넘어가는 게이트를 구현.
+- **설계 변경**: 원안은 GitHub Environment(Required reviewers)로 게이트를 구현했으나, 실제
+  서비스가 "PM에게 Discord DM으로 승인 요청을 보내고 버튼(수락/거절/보류)으로 응답받는" 구조로
+  가는 게 확정되어 그에 맞춰 구현. (정식 서비스에서는 전용 웹페이지로 대체 예정이며, 이 단계는
+  "사람이 눌러야 다음으로 넘어간다"는 게이트 로직만 검증한다.)
+- `phases/05-pm-approval/run.py`: `discord.py`로 게이트웨이 접속 → `DISCORD_PM_USER_ID`에게
+  DM으로 문서 초안 + 수락/거절/보류 버튼 전송 → 클릭 결과를 `decision`으로 반환 (5분 무응답 시 `held`)
+- 입력 스키마: `04`의 출력 (`DocDraftOutput`)
+- 출력 스키마: `{"decision": "approved"|"rejected"|"held", "structured": {...}, "doc_text": str}`
+- 독립 실행: `python phases/05-pm-approval/run.py --mock` (실제 DM 없이 fixtures로 로직 확인) /
+  `python phases/05-pm-approval/run.py --input fixtures/sample_draft.json` (실제 DM 전송)
+- 통과 기준: PM이 DM으로 승인 요청과 버튼을 받고, 버튼을 누르면 그 결과(`decision`)가 정확히
+  반영되어 스크립트가 종료되는 것을 확인 (수락/거절/보류 각각).
 
 ### phases/06-notion-sync
 - 목적: 승인된 데이터를 실제 Notion 페이지/DB에 기록.
@@ -133,13 +141,14 @@ repo/
 
 ### `.github/workflows/chat-poll.yml`
 - 트리거: `schedule` (검증 단계는 `*/5 * * * *`, 이후 운영 단계에서 1시간으로 조정)
-- 순서: `01-chat-polling` → `03-semantic-judge` → (의미 있으면) `04-doc-draft` → `environment: pm-approval` → `06-notion-sync`
+- 순서: `01-chat-polling` → `03-semantic-judge` → (의미 있으면) `04-doc-draft` → `05-pm-approval`(Discord DM 승인 대기, 최대 5분) → `decision == approved`일 때만 `06-notion-sync`
 
 ### `.github/workflows/process-meeting.yml`
 - 트리거: `workflow_dispatch` (input: 오디오 파일 경로 또는 레포 내 고정 경로 사용)
-- 순서: `02-meeting-transcribe` → `03-semantic-judge` → `04-doc-draft` → `environment: pm-approval` → `06-notion-sync`
+- 순서: `02-meeting-transcribe` → `03-semantic-judge` → `04-doc-draft` → `05-pm-approval`(Discord DM 승인 대기, 최대 5분) → `decision == approved`일 때만 `06-notion-sync`
 
-두 워크플로 모두 `shared/schemas.py`의 스키마를 그대로 job 간 아티팩트(`actions/upload-artifact` / `download-artifact`)로 주고받는다.
+두 워크플로 모두 `shared/schemas.py`의 스키마를 그대로 job 간 아티팩트(`actions/upload-artifact` / `download-artifact`)로 주고받는다. `05-pm-approval`은 GitHub Environment 승인 기능을 쓰지 않고
+`run.py`가 job 스텝 안에서 직접 Discord DM을 보내고 버튼 클릭까지 대기한다.
 
 ## 5. 환경변수 / Secrets
 
@@ -148,6 +157,7 @@ repo/
 ```
 DISCORD_BOT_TOKEN=
 DISCORD_CHANNEL_ID=
+DISCORD_PM_USER_ID=
 GEMINI_API_KEY=
 NOTION_API_KEY=
 NOTION_DATABASE_ID=
@@ -159,5 +169,5 @@ NOTION_DATABASE_ID=
 - [ ] `07-cycle-integration/run_all_local.sh`가 로컬에서 끝까지 에러 없이 완주한다.
 - [ ] `chat-poll.yml`이 5분 간격으로 최소 2회 이상 정상 실행되고, 의미 없는 폴링 결과에서는 04 이후 단계가 스킵된다.
 - [ ] `process-meeting.yml`을 수동 실행(workflow_dispatch)해서 샘플 오디오가 전사→판단→초안→승인 대기까지 끊기지 않고 간다.
-- [ ] `pm-approval` environment에서 실제로 Approve를 눌러야 Notion 반영이 실행되는 것을 확인했다.
+- [ ] PM이 Discord DM의 버튼(수락/거절/보류)을 눌러야 `decision`이 확정되고, `approved`일 때만 Notion 반영이 실행되는 것을 확인했다.
 - [ ] 전체 과정에서 유료 API 호출이 0건이다(Gemini/GitHub Actions 무료 티어 한도 안에서 완료).

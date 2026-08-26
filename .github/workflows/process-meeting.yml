@@ -1,0 +1,156 @@
+name: process-meeting
+
+on:
+  workflow_dispatch:
+    inputs:
+      audio_path:
+        description: '전사할 오디오 파일 경로 (레포 내 상대경로)'
+        required: false
+        default: 'phases/00-sample-audio/fixtures/sample_meeting.wav'
+
+env:
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  transcribe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install -r requirements.txt
+      - name: Transcribe audio
+        run: |
+          python phases/02-meeting-transcribe/run.py \
+            --audio "${{ github.event.inputs.audio_path }}" \
+            --model tiny > transcript.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: transcript
+          path: transcript.json
+
+  judge:
+    needs: transcribe
+    runs-on: ubuntu-latest
+    outputs:
+      is_meaningful: ${{ steps.judge.outputs.is_meaningful }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: transcript
+      - name: Build semantic-judge input
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open("transcript.json"))
+          text = " ".join(seg["text"] for seg in data["segments"])
+          json.dump({"source": "meeting", "text": text}, open("judge_input.json", "w"), ensure_ascii=False)
+          PY
+      - name: Run semantic-judge
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python phases/03-semantic-judge/run.py --input judge_input.json > judged.json
+      - id: judge
+        run: |
+          IS_MEANINGFUL=$(python -c "import json; print(str(json.load(open('judged.json'))['is_meaningful']).lower())")
+          echo "is_meaningful=$IS_MEANINGFUL" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: judge-input
+          path: judge_input.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: judged
+          path: judged.json
+
+  draft:
+    needs: judge
+    if: needs.judge.outputs.is_meaningful == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: judge-input
+      - uses: actions/download-artifact@v4
+        with:
+          name: judged
+      - name: Build doc-draft input
+        run: |
+          python - <<'PY'
+          import json
+          judged = json.load(open("judged.json"))
+          text = json.load(open("judge_input.json"))["text"]
+          json.dump({"judged": judged, "text": text}, open("draft_input.json", "w"), ensure_ascii=False)
+          PY
+      - name: Run doc-draft
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python phases/04-doc-draft/run.py --input draft_input.json > draft.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: draft
+          path: draft.json
+
+  approve:
+    needs: draft
+    runs-on: ubuntu-latest
+    outputs:
+      decision: ${{ steps.approve.outputs.decision }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: draft
+      - id: approve
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_PM_USER_ID: ${{ secrets.DISCORD_PM_USER_ID }}
+        run: |
+          python phases/05-pm-approval/run.py --input draft.json > approval.json
+          DECISION=$(python -c "import json; print(json.load(open('approval.json'))['decision'])")
+          echo "decision=$DECISION" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: approval
+          path: approval.json
+
+  sync:
+    needs: approve
+    if: needs.approve.outputs.decision == 'approved'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: approval
+      - name: Build notion-sync input
+        run: |
+          python - <<'PY'
+          import json
+          a = json.load(open("approval.json"))
+          json.dump({"structured": a["structured"], "doc_text": a["doc_text"]}, open("notion_input.json", "w"), ensure_ascii=False)
+          PY
+      - name: Sync to Notion
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        run: python phases/06-notion-sync/run.py --input notion_input.json

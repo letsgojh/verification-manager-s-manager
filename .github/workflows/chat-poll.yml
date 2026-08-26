@@ -1,0 +1,164 @@
+name: chat-poll
+
+# 검증 단계라 5분 간격. 운영 단계로 넘어가면 1시간(예: '0 * * * *')으로 조정할 것.
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+env:
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  poll:
+    runs-on: ubuntu-latest
+    outputs:
+      has_messages: ${{ steps.check.outputs.has_messages }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install -r requirements.txt
+      - name: Poll Discord channel
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+        run: |
+          SINCE=$(date -u -d '5 minutes ago' +%Y-%m-%dT%H:%M:%S+00:00)
+          python phases/01-chat-polling/run.py \
+            --channel-id "${{ secrets.DISCORD_CHANNEL_ID }}" \
+            --since "$SINCE" > messages.json
+      - id: check
+        run: |
+          COUNT=$(python -c "import json; print(len(json.load(open('messages.json'))['messages']))")
+          if [ "$COUNT" -gt 0 ]; then echo "has_messages=true" >> "$GITHUB_OUTPUT"; else echo "has_messages=false" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: messages
+          path: messages.json
+
+  judge:
+    needs: poll
+    if: needs.poll.outputs.has_messages == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      is_meaningful: ${{ steps.judge.outputs.is_meaningful }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: messages
+      - name: Build semantic-judge input
+        run: |
+          python - <<'PY'
+          import json
+          data = json.load(open("messages.json"))
+          text = "\n".join(f"{m['author']}: {m['content']}" for m in data["messages"])
+          json.dump({"source": "chat", "text": text}, open("judge_input.json", "w"), ensure_ascii=False)
+          PY
+      - name: Run semantic-judge
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python phases/03-semantic-judge/run.py --input judge_input.json > judged.json
+      - id: judge
+        run: |
+          IS_MEANINGFUL=$(python -c "import json; print(str(json.load(open('judged.json'))['is_meaningful']).lower())")
+          echo "is_meaningful=$IS_MEANINGFUL" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: judge-input
+          path: judge_input.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: judged
+          path: judged.json
+
+  draft:
+    needs: judge
+    if: needs.judge.outputs.is_meaningful == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: judge-input
+      - uses: actions/download-artifact@v4
+        with:
+          name: judged
+      - name: Build doc-draft input
+        run: |
+          python - <<'PY'
+          import json
+          judged = json.load(open("judged.json"))
+          text = json.load(open("judge_input.json"))["text"]
+          json.dump({"judged": judged, "text": text}, open("draft_input.json", "w"), ensure_ascii=False)
+          PY
+      - name: Run doc-draft
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python phases/04-doc-draft/run.py --input draft_input.json > draft.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: draft
+          path: draft.json
+
+  approve:
+    needs: draft
+    runs-on: ubuntu-latest
+    outputs:
+      decision: ${{ steps.approve.outputs.decision }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: draft
+      - id: approve
+        env:
+          DISCORD_BOT_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+          DISCORD_PM_USER_ID: ${{ secrets.DISCORD_PM_USER_ID }}
+        run: |
+          python phases/05-pm-approval/run.py --input draft.json > approval.json
+          DECISION=$(python -c "import json; print(json.load(open('approval.json'))['decision'])")
+          echo "decision=$DECISION" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: approval
+          path: approval.json
+
+  sync:
+    needs: approve
+    if: needs.approve.outputs.decision == 'approved'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: approval
+      - name: Build notion-sync input
+        run: |
+          python - <<'PY'
+          import json
+          a = json.load(open("approval.json"))
+          json.dump({"structured": a["structured"], "doc_text": a["doc_text"]}, open("notion_input.json", "w"), ensure_ascii=False)
+          PY
+      - name: Sync to Notion
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        run: python phases/06-notion-sync/run.py --input notion_input.json

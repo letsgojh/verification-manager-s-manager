@@ -62,6 +62,14 @@ class DocDraftOutput(BaseModel):
     doc_text: str
 
 
+# ---- phase 05: pm-approval ----
+
+class PmApprovalOutput(BaseModel):
+    decision: Literal["approved", "rejected", "held"]
+    structured: StructuredChange
+    doc_text: str
+
+
 # ---- phase 06: notion-sync ----
 
 class NotionSyncInput(BaseModel):
