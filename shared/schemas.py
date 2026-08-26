@@ -86,11 +86,19 @@ class DeadlineRemindInput(BaseModel):
     type: str
 
 
+class ChecklistItem(BaseModel):
+    item: str
+    done: bool
+
+
 class DeadlineRemindOutput(BaseModel):
     skipped: bool = False
     days_left: Optional[int] = None
     check_in_message: Optional[str] = None
     assignee_reply: Optional[str] = None
+    clarifying_question: Optional[str] = None
+    assignee_reply_2: Optional[str] = None
+    checklist: Optional[list[ChecklistItem]] = None
     assessment: Optional[Literal["on_track", "at_risk", "no_reply"]] = None
     notion_synced: bool = False
     closing_message: Optional[str] = None

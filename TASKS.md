@@ -67,7 +67,8 @@
   - [x] `--mock`: fixtures를 "수락"으로 간주하고 바로 출력
   - [x] 실제 모드: PM에게 DM으로 문서 초안 + 수락/거절/보류 버튼 전송, 클릭 결과 대기(5분 타임아웃 시 `held`)
 - [x] `phases/05-pm-approval/README.md` 작성
-- [x] 검증: mock 모드 + 실제 모드로 PM에게 DM 전송 후 수락 버튼 클릭 → `decision: "approved"` 정확히 반영됨 확인
+- [x] 검증: mock 모드 + 실제 모드로 PM에게 DM 전송 후 수락/거절/보류 버튼 각각 클릭 →
+  `decision: "approved"`/`"rejected"`/`"held"` 전부 정확히 반영됨 확인
 
 ## Phase 06. notion-sync
 
